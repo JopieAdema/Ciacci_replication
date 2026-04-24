@@ -1,7 +1,11 @@
 *Block 0: Setup ----
 {
     clear all
-    cd "C:\Users\c4041171\Dropbox\Ciacci replication\replication_220426\"
+    set linesize 250
+    * >>> EDIT THIS LINE: absolute path to the replication package root.    <<<
+    * >>> All other paths in this file are derived from `${root}'.          <<<
+    global root "C:/Users/c4041171/Dropbox/Ciacci replication/replication_220426"
+    cd "${root}"
     set seed 1234
     * Number of cluster-bootstrap replications for Table 2 cols 3 & 6.
     * Production value ~99-999; lower for faster iteration.
@@ -21,15 +25,15 @@
     foreach f in "Sweden_tables.dta" "Sweden_tables3.dta" ///
                  "yearly national data rape reports.dta" ///
                  "annual data nordic countries.dta" {
-        cap confirm file "./data/`f'"
+        cap confirm file "${root}/data/`f'"
         if _rc {
-            di as error "Raw data file missing: ./data/`f'"
-            di as error "Please place all .dta files in ./data/ before running."
+            di as error "Raw data file missing: ${root}/data/`f'"
+            di as error "Please place all .dta files in ${root}/data/ before running."
             exit 601
         }
     }
 
-    use ".\data\Sweden_tables.dta", clear
+    use "${root}/data/Sweden_tables.dta", clear
 
     * running variable + treatment
     gen running         = ym - 468
@@ -73,18 +77,19 @@
 
 *Figure 1: yearly national rape reports ----
 {
-    use ".\data\yearly national data rape reports.dta", clear
+    use "${root}/data/yearly national data rape reports.dta", clear
     twoway (scatter reports year), ///
         ylabel(0(1000)10000, angle(horizontal)) ///
         xline(1997.5 1998.5 2004.5 2017.5) ///
-        xlabel(1991(1)2022, angle(forty_five)) ///
+        xlabel(1992(2)2022) ///
         scheme(s1mono)
-    graph export ".\output\F1.pdf", replace
+    graph export "${root}/output/F1.pdf", replace
+    graph export "${root}/output/F1.eps", replace
 }
 *Figure 2: from Ciacci (2025) -- external, nothing to run ----
 *Figure 3: Nordic countries comparison ----
 {
-    use ".\data\annual data nordic countries.dta", clear
+    use "${root}/data/annual data nordic countries.dta", clear
     foreach c in dk swe fi no {
         gen temp = `c' if year==1998
         egen `c'_99 = max(temp)
@@ -111,7 +116,8 @@
           text(0.3 2004.7 "Definition of rape" "expanded" "in Sweden",  placement(e) size(small) color(black)) ///
           text(0.3 1993.5 "Definition of rape" "expanded" "in Sweden",  placement(e) size(small) color(black)) ///
           scheme(s1mono) graphregion(lcolor(none)) plotregion(lstyle(none))
-    graph export ".\output\F3.pdf", replace
+    graph export "${root}/output/F3.pdf", replace
+    graph export "${root}/output/F3.eps", replace
 }
 *Table 1: text-only, nothing to run ----
 *Table 2: RDiT estimates of reform on rape ----
@@ -184,82 +190,48 @@
 {
     local B = $B_REPS
 
-    *--- Col 3 bootstrap (restricted sample) ---
-    use `prepped', clear
-    keep if year<2001
-    tempfile data_restr
-    save `data_restr'
+    * c3 = restricted sample (year<2001); c6 = full sample. Order matters
+    * because the RNG seed is set once: c3 must run first to preserve the
+    * runiform() call sequence (and hence the bootstrap draws).
+    foreach spec in c3 c6 {
+        use `prepped', clear
+        if "`spec'"=="c3" keep if year<2001
+        tempfile data_`spec'
+        save `data_`spec''
 
-    qui levelsof regionc_m, local(clusters)
-    local n_clusters : word count `clusters'
+        qui levelsof regionc_m, local(clusters)
+        local n_clusters : word count `clusters'
 
-    matrix bs_c3 = J(`B', 1, .)
-    forval b = 1/`B' {
-        clear
-        set obs `n_clusters'
-        gen double regionc_m = .
-        gen int    _rep      = .
-        forval i = 1/`n_clusters' {
-            local draw : word `= ceil(runiform() * `n_clusters')' of `clusters'
-            qui replace regionc_m = `draw' in `i'
-            qui replace _rep      = `i'    in `i'
+        matrix bs_`spec' = J(`B', 1, .)
+        forval b = 1/`B' {
+            clear
+            set obs `n_clusters'
+            gen double regionc_m = .
+            gen int    _rep      = .
+            forval i = 1/`n_clusters' {
+                local draw : word `= ceil(runiform() * `n_clusters')' of `clusters'
+                qui replace regionc_m = `draw' in `i'
+                qui replace _rep      = `i'    in `i'
+            }
+            tempfile keys
+            qui save `keys'
+
+            use `data_`spec'', clear
+            qui joinby regionc_m using `keys'
+            cap drop lrape_mres_b
+            qui reg lrape i.month
+            qui predict lrape_mres_b, resid
+            qui rdrobust lrape_mres_b running, covs(police cdum2-cdum21) ///
+                vce(cluster regionc_m) p(2) kernel(uniform)
+            matrix bs_`spec'[`b', 1] = e(tau_cl)
         }
-        tempfile keys
-        qui save `keys'
-
-        use `data_restr', clear
-        qui joinby regionc_m using `keys'
-        cap drop lrape_mres_b
-        qui reg lrape i.month
-        qui predict lrape_mres_b, resid
-        qui rdrobust lrape_mres_b running, covs(police cdum2-cdum21) ///
-            vce(cluster regionc_m) p(2) kernel(uniform)
-        matrix bs_c3[`b', 1] = e(tau_cl)
-    }
-    clear
-    matrix colnames bs_c3 = tau
-    svmat bs_c3, names(col)
-    qui summ tau
-    scalar t2_se_c3_boot = r(sd)
-    scalar t2_p_c3_boot  = 2*(1 - normal(abs(t2_b_c3/t2_se_c3_boot)))
-
-    *--- Col 6 bootstrap (full sample) ---
-    use `prepped', clear
-    tempfile data_full
-    save `data_full'
-
-    qui levelsof regionc_m, local(clusters)
-    local n_clusters : word count `clusters'
-
-    matrix bs_c6 = J(`B', 1, .)
-    forval b = 1/`B' {
         clear
-        set obs `n_clusters'
-        gen double regionc_m = .
-        gen int    _rep      = .
-        forval i = 1/`n_clusters' {
-            local draw : word `= ceil(runiform() * `n_clusters')' of `clusters'
-            qui replace regionc_m = `draw' in `i'
-            qui replace _rep      = `i'    in `i'
-        }
-        tempfile keys
-        qui save `keys'
-
-        use `data_full', clear
-        qui joinby regionc_m using `keys'
-        cap drop lrape_mres_b
-        qui reg lrape i.month
-        qui predict lrape_mres_b, resid
-        qui rdrobust lrape_mres_b running, covs(police cdum2-cdum21) ///
-            vce(cluster regionc_m) p(2) kernel(uniform)
-        matrix bs_c6[`b', 1] = e(tau_cl)
+        matrix colnames bs_`spec' = tau
+        svmat bs_`spec', names(col)
+        qui summ tau
+        scalar t2_se_`spec'_boot = r(sd)
+        scalar t2_p_`spec'_boot  = 2*(1 - normal(abs(t2_b_`spec'/t2_se_`spec'_boot)))
     }
-    clear
-    matrix colnames bs_c6 = tau
-    svmat bs_c6, names(col)
-    qui summ tau
-    scalar t2_se_c6_boot = r(sd)
-    scalar t2_p_c6_boot  = 2*(1 - normal(abs(t2_b_c6/t2_se_c6_boot)))
 
     di as txt "Bootstrap SE col 3: " t2_se_c3_boot "  bootstrap p: " t2_p_c3_boot
     di as txt "Bootstrap SE col 6: " t2_se_c6_boot "  bootstrap p: " t2_p_c6_boot
@@ -267,7 +239,7 @@
 *Block: write t2.tex ----
 {
     capture file close t2
-    file open t2 using ".\output\t2.tex", write replace
+    file open t2 using "${root}/output/t2.tex", write replace
 
     foreach c in c1 c3 c4 c6 {
         local b   = t2_b_`c'
@@ -292,7 +264,7 @@
     file write t2 "Obs., right & `nr_c1_s' & N/A & `nr_c3_s' & `nr_c4_s' & N/A & `nr_c6_s' \\" _n
     local p_c3_boot_s = "\textit{" + string(t2_p_c3_boot,"%9.3f") + "}"
     local p_c6_boot_s = "\textit{" + string(t2_p_c6_boot,"%9.3f") + "}"
-    file write t2 "Wild cluster bootstrap p-value &  & N/A & `p_c3_boot_s' &  & N/A & `p_c6_boot_s' \\" _n
+    file write t2 "Cluster bootstrap p-value &  & N/A & `p_c3_boot_s' &  & N/A & `p_c6_boot_s' \\" _n
     file write t2 "Year FE & x & x &  & x & x &  \\" _n
     file write t2 "Region FE & x & x & x & x & x & x \\" _n
     file write t2 "Month FE & x & x &  & x & x &  \\" _n
@@ -302,7 +274,7 @@
 }
 *Table 3: RD estimates through 2005 ----
 {
-    use ".\data\Sweden_tables.dta", clear
+    use "${root}/data/Sweden_tables.dta", clear
     keep if year<=2005
 
     gen running         = ym - 468
@@ -393,7 +365,7 @@
 
     *--- Write t3.tex ---
     capture file close t3
-    file open t3 using ".\output\t3.tex", write replace
+    file open t3 using "${root}/output/t3.tex", write replace
 
     foreach c in c1 c2 c3 c4 c5 c6 {
         local b   = t3_b_`c'
@@ -422,11 +394,11 @@
 }
 *Table 4: sex-purchase prosecutions by year ----
 {
-    use ".\data\Sweden_tables.dta", clear
+    use "${root}/data/Sweden_tables.dta", clear
     collapse (sum) sex_purchase_abs_, by(year)
 
     capture file close t4
-    file open t4 using ".\output\t4.tex", write replace
+    file open t4 using "${root}/output/t4.tex", write replace
 
     local ncols = _N
     local colspec "l"
@@ -484,7 +456,8 @@
         xline(-13 -1 11 23, lcolor(green%24) lp(solid) lw(2.25)) ///
         xline(-24 -12 0 12 24, lcolor(red%24) lp(solid) lw(2.25)) ///
         scheme(s1mono)
-    graph export ".\output\FB1A.pdf", replace
+    graph export "${root}/output/FB1A.pdf", replace
+    graph export "${root}/output/FB1A.eps", replace
 
     line residx rawx running, xline(-.5) legend(pos(6) row(1)) lwidth(medthick) ///
         title(B: Treatment) xtitle("Months to treatment") xlabel(-24(6)28,labsize(medsmall)) ///
@@ -492,7 +465,8 @@
         xline(-13 -1 11 23, lcolor(green%24) lp(solid) lw(2.25)) ///
         xline(-24 -12 0 12 24, lcolor(red%24) lp(solid) lw(2.25)) ///
         scheme(s1mono)
-    graph export ".\output\FB1B.pdf", replace
+    graph export "${root}/output/FB1B.pdf", replace
+    graph export "${root}/output/FB1B.eps", replace
     restore
 }
 
@@ -526,14 +500,16 @@
         ylabel(,labsize(medsmall)) legend(size(small)) ///
         xline(-1, lcolor(green%24) lp(solid) lw(6.5)) ///
         xline(-2 0, lcolor(red%24) lp(solid) lw(6.5)) scheme(s1mono)
-    graph export ".\output\FB2A.pdf", replace
+    graph export "${root}/output/FB2A.pdf", replace
+    graph export "${root}/output/FB2A.eps", replace
 
     line residx rawx running, xline(-.5) xlabel(-9(3)9) title(B: Treatment) ///
         legend(pos(6) row(1)) lwidth(medthick) xtitle("Months to treatment") ///
         ylabel(,labsize(medsmall)) legend(size(small)) ///
         xline(-1, lcolor(green%24) lp(solid) lw(6.5)) ///
         xline(-2 0, lcolor(red%24) lp(solid) lw(6.5)) scheme(s1mono)
-    graph export ".\output\FB2B.pdf", replace
+    graph export "${root}/output/FB2B.pdf", replace
+    graph export "${root}/output/FB2B.eps", replace
     restore
 }
 
@@ -572,25 +548,27 @@
         ylabel(,labsize(medsmall)) legend(size(small)) ///
         xline(-4 -1 2 5, lcolor(green%24) lp(solid) lw(8.5)) ///
         xline(-6 -3 0 3 6, lcolor(red%24) lp(solid) lw(8.5)) scheme(s1mono)
-    graph export ".\output\FB4A.pdf", replace
+    graph export "${root}/output/FB4A.pdf", replace
+    graph export "${root}/output/FB4A.eps", replace
 
     line residx rawx running, xline(-.5) xlabel(-6(3)6) title(B: Treatment) ///
         legend(pos(6) row(1)) lwidth(medthick) xtitle("Months to treatment") ///
         ylabel(,labsize(medsmall)) legend(size(small)) ///
         xline(-4 -1 2 5, lcolor(green%24) lp(solid) lw(8.5)) ///
         xline(-6 -3 0 3 6, lcolor(red%24) lp(solid) lw(8.5)) scheme(s1mono)
-    graph export ".\output\FB4B.pdf", replace
+    graph export "${root}/output/FB4B.pdf", replace
+    graph export "${root}/output/FB4B.eps", replace
     restore
 }
 
 
 *Figure B5: four RDiT rdplot panels (uniform vs triangular, raw vs month-resid) ----
-* STATUS: READY -- exports ./output/FB5.pdf (combined 4-panel).
+* STATUS: READY -- exports ${root}/output/FB5.pdf (combined 4-panel).
 *  Source: "new rdd code 251029.do" lines 76-87. Uses the Ciacci 2025 sample
 *  (year<=2005) with both `season_` (3-month blocks) and `season_c_`
 *  (centered/calendar seasons) dummies.
 {
-    use ".\data\Sweden_tables.dta", clear
+    use "${root}/data/Sweden_tables.dta", clear
     keep if year<=2005
     gen running = ym - 468
     *3-month block seasons
@@ -639,7 +617,8 @@
 
     graph combine "`fb5_1'" "`fb5_3'" "`fb5_2'" "`fb5_4'", ///
         scheme(s1mono) col(2) ysize(13) xsize(20) iscale(.6)
-    cap noi graph export ".\output\FB5.pdf", replace
+    cap noi graph export "${root}/output/FB5.pdf", replace
+    cap noi graph export "${root}/output/FB5.eps", replace
 }
 
 
@@ -648,7 +627,7 @@
 *  from -12 to +11 months around the true threshold and stores
 *  treatment-effect estimates and 90% CIs.
 {
-    use ".\data\Sweden_tables.dta", clear
+    use "${root}/data/Sweden_tables.dta", clear
     keep if year<=2005
     gen running = ym - 468
     qui reg lrape i.month
@@ -716,7 +695,8 @@
 
     graph combine "`fb6_uni'" "`fb6_tri'", ///
         scheme(s1mono) col(2) ysize(7) xsize(20) iscale(1.2) ycommon
-    cap noi graph export ".\output\FB6.pdf", replace
+    cap noi graph export "${root}/output/FB6.pdf", replace
+    cap noi graph export "${root}/output/FB6.eps", replace
 }
 
 
@@ -775,7 +755,7 @@
 
     *--- write tB1.tex and tB2.tex -----------------------------------------
     foreach table in B1 B2 {
-        local outpath "./output/t`table'.tex"
+        local outpath "${root}/output/t`table'.tex"
         capture file close t_out
         file open t_out using "`outpath'", write replace
 
@@ -838,7 +818,7 @@
         di as error "Table C2 skipped: need `reghdfe' and `outreg2'."
     }
     else {
-        use ".\data\Sweden_tables.dta", clear
+        use "${root}/data/Sweden_tables.dta", clear
         cap drop sum_sex_pur dummy_cum_sex_pr rt_sp rt_sex_pr
 
         bys regionc (ym): gen sum_sex_pur = sum(sex_purchase_abs_)
@@ -863,14 +843,14 @@
         * Out-of-window flag (col 2)
         gen non_window = running==.
 
-        cap erase ".\output\tC2.tex"
+        cap erase "${root}/output/tC2.tex"
         * col 1 - main
         reghdfe lrape R_sp* police, a(regionc year month) cl(regionc year month) version(3)
-        outreg2 using ".\output\tC2.tex", tex(frag) dec(3) replace ctitle(main) ///
+        outreg2 using "${root}/output/tC2.tex", tex(frag) dec(3) replace ctitle(main) ///
             keep(R_sprt_sp_1 R_sprt_sp_3 R_sprt_sp_4 R_sprt_sp_5) label stats(coef se pval) nocons
         * col 2 - out-of-window dummy added
         reghdfe lrape R_sp* police non_window, a(regionc year month) cl(regionc year month) version(3)
-        outreg2 using ".\output\tC2.tex", tex(frag) dec(3) append ctitle(nw_dummy) ///
+        outreg2 using "${root}/output/tC2.tex", tex(frag) dec(3) append ctitle(nw_dummy) ///
             keep(R_sprt_sp_1 R_sprt_sp_3 R_sprt_sp_4 R_sprt_sp_5) label stats(coef se pval) nocons
     }
 }
@@ -884,10 +864,10 @@
     cap which outreg2
     local _ok2 = (_rc==0)
     if !`_ok1' | !`_ok2' {
-        di as error "Table C2 skipped: need `reghdfe' and `outreg2'. Run: ssc install reghdfe; ssc install outreg2"
+        di as error "Table C3 skipped: need `reghdfe' and `outreg2'. Run: ssc install reghdfe; ssc install outreg2"
     }
     else {
-        use ".\data\Sweden_tables.dta", clear
+        use "${root}/data/Sweden_tables.dta", clear
         cap drop sum_sex_pur dummy_cum_sex_pr running_time_sex_pr rt_sp rt_sex_pr
         bys regionc (ym): gen sum_sex_pur = sum(sex_purchase_abs_)
         gen dummy_cum_sex_pr = (sex_purchase_abs_>0)
@@ -912,19 +892,19 @@
         egen r_m   = group(regionc month)
         egen r_y_m = group(regionc year month)
 
-        cap erase ".\output\tC3.tex"
+        cap erase "${root}/output/tC3.tex"
         reghdfe lrape R_sp* police, a(regionc year month) cl(regionc year month) version(3)
-        outreg2 using ".\output\tC3.tex", tex(frag) dec(3) replace ctitle(main)              keep(R_sp*) label stats(coef se pval) nocons
+        outreg2 using "${root}/output/tC3.tex", tex(frag) dec(3) replace ctitle(main)              keep(R_sp*) label stats(coef se pval) nocons
         reghdfe lrape R_sp* police, a(regionc year month) cl(region)
-        outreg2 using ".\output\tC3.tex", tex(frag) dec(3) append  ctitle(region)            keep(R_sp*) label stats(coef se pval) nocons
+        outreg2 using "${root}/output/tC3.tex", tex(frag) dec(3) append  ctitle(region)            keep(R_sp*) label stats(coef se pval) nocons
         reghdfe lrape R_sp* police, a(regionc year month) cl(r_y)
-        outreg2 using ".\output\tC3.tex", tex(frag) dec(3) append  ctitle(region*year)       keep(R_sp*) label stats(coef se pval) nocons
+        outreg2 using "${root}/output/tC3.tex", tex(frag) dec(3) append  ctitle(region*year)       keep(R_sp*) label stats(coef se pval) nocons
         reghdfe lrape R_sp* police, a(regionc year month) cl(r_m)
-        outreg2 using ".\output\tC3.tex", tex(frag) dec(3) append  ctitle(region*month)      keep(R_sp*) label stats(coef se pval) nocons
+        outreg2 using "${root}/output/tC3.tex", tex(frag) dec(3) append  ctitle(region*month)      keep(R_sp*) label stats(coef se pval) nocons
         reghdfe lrape R_sp* police, a(regionc year month) cl(r_y_m)
-        outreg2 using ".\output\tC3.tex", tex(frag) dec(3) append  ctitle(region*year*month) keep(R_sp*) label stats(coef se pval) nocons noaster
+        outreg2 using "${root}/output/tC3.tex", tex(frag) dec(3) append  ctitle(region*year*month) keep(R_sp*) label stats(coef se pval) nocons noaster
         reghdfe lrape R_sp* police, a(regionc year month)
-        outreg2 using ".\output\tC3.tex", tex(frag) dec(3) append  ctitle(no clustering)     keep(R_sp*) label stats(coef se pval) nocons
+        outreg2 using "${root}/output/tC3.tex", tex(frag) dec(3) append  ctitle(no clustering)     keep(R_sp*) label stats(coef se pval) nocons
 
         *Keep the data for Table C3 below
         tempfile event_data
@@ -941,7 +921,7 @@
         di as error "Table C5 skipped: `outreg2' not installed."
     }
     else {
-        use ".\data\Sweden_tables3.dta", clear
+        use "${root}/data/Sweden_tables3.dta", clear
         xtset regionc ym
         foreach var in new_land_inter3 new_land_eintra4 {
             gen `var'_ues = `var'
@@ -954,7 +934,7 @@
         }
 
         cap la var sex_purchase_abs_ "Sex purchase prosecutions"
-        cap erase ".\output\tC5.tex"
+        cap erase "${root}/output/tC5.tex"
 
         *helper: first-stage F via a separate OLS + test (more robust than
         *`estat firststage', which can return empty r(mineig) here).
@@ -965,8 +945,8 @@
         scalar F1 = r(F)
         xi: ivregress 2sls lrape (sex_purchase_abs_ = new_land_inter3 new_land_eintra4) ///
             police i.regionc*year i.year i.month, cluster(regionc)
-        outreg2 using ".\output\tC5.tex", tex(frag) dec(3) replace ctitle(main) ///
-            keep(sex_purchase_abs_) label addstat("First-stage F", F1) nocons
+        outreg2 using "${root}/output/tC5.tex", tex(frag) dec(3) replace ctitle(main) ///
+            keep(sex_purchase_abs_) label stats(coef se pval) addstat("First-stage F", F1) nocons
 
         *col 2
         xi: regress sex_purchase_abs_ new_land_inter3_ues new_land_eintra4_ues police ///
@@ -977,8 +957,8 @@
             police i.regionc i.regionc*year i.year i.month, cluster(regionc)
         *freeze col 2's estimation sample so col 3 uses the same rows
         gen byte c5_samp2 = e(sample)
-        outreg2 using ".\output\tC5.tex", tex(frag) dec(3) append  ctitle(upp_inc) ///
-            keep(sex_purchase_abs_) label addstat("First-stage F", F2) nocons
+        outreg2 using "${root}/output/tC5.tex", tex(frag) dec(3) append  ctitle(upp_inc) ///
+            keep(sex_purchase_abs_) label stats(coef se pval) addstat("First-stage F", F2) nocons
 
         *col 3 -- Ciacci's "Stockholm excluded" spec: instrument values for
         *region 12 set to 0 via the *_ns variables. Sample restricted to
@@ -989,8 +969,8 @@
         scalar F3 = r(F)
         xi: ivregress 2sls lrape (sex_purchase_abs_ = new_land_inter3_ns new_land_eintra4_ns) ///
             police i.regionc i.regionc*year i.year i.month if c5_samp2==1, cluster(regionc)
-        outreg2 using ".\output\tC5.tex", tex(frag) dec(3) append  ctitle(sto_excl) ///
-            keep(sex_purchase_abs_) label addstat("First-stage F", F3) nocons
+        outreg2 using "${root}/output/tC5.tex", tex(frag) dec(3) append  ctitle(sto_excl) ///
+            keep(sex_purchase_abs_) label stats(coef se pval) addstat("First-stage F", F3) nocons
     }
 }
 
@@ -998,6 +978,6 @@
 *There is no option to suppress it, so erase them after the fact.
 {
     foreach f in tC2 tC3 tC5 {
-        cap erase "./output/`f'.txt"
+        cap erase "${root}/output/`f'.txt"
     }
 }

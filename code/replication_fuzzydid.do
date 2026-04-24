@@ -1,12 +1,16 @@
 *Standalone runner for Table C1 (Fuzzy DiD). Split out of replication.do
-*because `fuzzydid' with breps=100 takes several minutes and is rarely re-run.
+*because `fuzzydid' with breps=99 takes ~25-30 minutes and is rarely re-run.
 *Exports: console/log output only (no polished .tex export yet).
 *Requires: `ssc install fuzzydid'.
 
 *Block 0: Setup ----
 {
     clear all
-    cd "C:\Users\c4041171\Dropbox\Ciacci replication\replication_220426\"
+    set linesize 250
+    * >>> EDIT THIS LINE: absolute path to the replication package root.    <<<
+    * >>> All other paths in this file are derived from `${root}'.          <<<
+    global root "C:/Users/c4041171/Dropbox/Ciacci replication/replication_220426"
+    cd "${root}"
     set seed 1234
     * Number of bootstrap replications for `fuzzydid' standard errors.
     * Production value ~100; lower for faster iteration.
@@ -22,7 +26,7 @@
         exit
     }
 
-    use ".\data\Sweden_tables.dta", clear
+    use "${root}/data/Sweden_tables.dta", clear
     cap drop sum_sex_pur
     bys region (ym): gen sum_sex_pur = sum(sex_purchase_abs_)
     gen d_sum_sex_pur      = (sum_sex_pur>0)
@@ -63,7 +67,7 @@
     scalar c2_N      = e(N)
 
     *annual collapse for cols 3 & 6
-    use ".\data\Sweden_tables.dta", clear
+    use "${root}/data/Sweden_tables.dta", clear
     collapse (sum) rape sex_purchase_abs_ (mean) police, by(regionc year)
     gen lrape = log(rape+1)
     cap drop sum_sex_pur
@@ -101,7 +105,7 @@
 *   columns (4)-(6) = Wald-DiD + time correction, same three specs.
 {
     capture file close tC1
-    file open tC1 using "./output/tC1.tex", write replace
+    file open tC1 using "${root}/output/tC1.tex", write replace
 
     foreach est in DID TC {
         foreach c in 1 2 3 {

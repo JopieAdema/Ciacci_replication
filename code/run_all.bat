@@ -1,7 +1,12 @@
 @echo off
-rem Run both replication scripts in order.
-rem Logs land in C:/Users/c4041171/replication.log and
-rem              C:/Users/c4041171/Dropbox/.../output/replication_fuzzydid.log.
+rem Run both replication scripts in order, via the run_stata.R helper.
+rem
+rem >>> EDIT THE THREE PATHS BELOW for your machine. <<<
+rem   RSCRIPT : full path to Rscript.exe
+rem   HELPER  : full path to the run_stata.R wrapper
+rem   ROOT    : absolute path to the replication package root
+rem
+rem Logs land in %ROOT%/replication.log and %ROOT%/replication_fuzzydid.log.
 
 set RSCRIPT="C:/Users/c4041171/AppData/Local/Programs/R/R-4.4.3/bin/Rscript.exe"
 set HELPER="C:/Users/c4041171/run_stata.R"
