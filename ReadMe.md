@@ -48,8 +48,19 @@ is missing.
 
 1. Install Stata 18 (MP or SE). The setup block auto-installs the SSC
    packages `rdrobust`, `reghdfe`, `outreg2`, `tuples`, `fuzzydid`.
-2. Set the project root at the top of each do-file (see **Paths** below).
-3. Run in Stata
+2. **Set the project root.** Open each do-file and edit the line
+   marked `>>> EDIT THIS LINE <<<` near the top (Block 0):
+
+   ```stata
+   global root "C:/Users/c4041171/Dropbox/Ciacci replication/replication_220426"
+   ```
+
+   Replace the path with the absolute path to wherever you placed the
+   replication package on your machine. Use forward slashes (`/`) — they
+   work on Windows, macOS, and Linux. All other paths in the do-files
+   (`${root}/data/...`, `${root}/output/...`) are derived from this one
+   variable, so this is the only line that needs editing.
+3. Run each do-file in Stata (or use `run_all.bat` on Windows).
 
 ### Runtime (per file, run alone)
 
